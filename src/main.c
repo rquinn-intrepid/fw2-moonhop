@@ -291,9 +291,16 @@ static void imu_poll(float dt, bool learn_bias, bool learn_rot)
         if (learn_rot)  s_rot[i] += (w[i] - s_bias[i]) * dt;
     }
     if (s_turn_mode) {
-        float rate = 0.0f;
-        for (int i = 0; i < 3; i++) rate += (w[i] - s_bias[i]) * s_k[i];
+        float rate = 0.0f, mag = 0.0f;
+        for (int i = 0; i < 3; i++) {
+            rate += (w[i] - s_bias[i]) * s_k[i];
+            mag += (w[i] - s_bias[i]) * (w[i] - s_bias[i]);
+        }
         if (fabsf(rate) > 0.8f) s_turn += rate * dt / RAD2DEG;     // ignore sub-deadband jitter
+        // Keep learning the gyro's resting offset whenever the board is still,
+        // so a small offset cannot integrate into a phantom turn.
+        if (mag < 1.5f * 1.5f)
+            for (int i = 0; i < 3; i++) s_bias[i] += 0.01f * (w[i] - s_bias[i]);
     }
 }
 static void cal_level(void)
@@ -322,14 +329,16 @@ static void cal_right(void)
     float u[3]; memcpy(u, s_g, sizeof u);
     float d = dot3(u, s_n);
     for (int i = 0; i < 3; i++) u[i] -= d * s_n[i];
-    if (len3(u) < 0.15f) {                   // no clear gesture: flattest board axis
-        int best = 0;
-        for (int i = 1; i < 3; i++) if (fabsf(s_n[i]) < fabsf(s_n[best])) best = i;
-        float e[3] = { 0, 0, 0 }; e[best] = 1.0f;
+    if (len3(u) < 0.15f) {
+        // No clear gesture: steer by the board's left-right axis (accelerometer
+        // X runs across the screen; Y runs top to bottom, so tipping the board
+        // toward or away from you must not steer). Y only if X is near gravity.
+        float e[3] = { 1, 0, 0 };
+        if (fabsf(s_n[0]) > 0.8f) { e[0] = 0; e[1] = 1; }
         d = dot3(e, s_n);
         for (int i = 0; i < 3; i++) u[i] = e[i] - d * s_n[i];
         s_mode_name = "TILT?";
-        DIAG("moonhop: no clear gesture, fallback axis %d\n", best);
+        DIAG("moonhop: no clear gesture, steering by board X axis\n");
     }
     norm3(u);
     memcpy(s_u, u, sizeof s_u);
@@ -469,7 +478,7 @@ int main(void)
         fw2_app_recovery_sleep_ms(50);
     }
     audio_setup();
-    DIAG("moonhop: v003 up, imu=%d agentio=%d\n", s_have_imu, agentio);
+    DIAG("moonhop: v004 up, imu=%d agentio=%d\n", s_have_imu, agentio);
 
     static mh_game_t g;
     mh_new_game(&g, 0x5EED1u);

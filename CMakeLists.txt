@@ -21,6 +21,6 @@ add_executable(moonhop src/main.c src/mh_game.c)
 target_link_libraries(moonhop PRIVATE freewili2_bsp)
 fw2_display_app(moonhop
     POWER_ZONES DISPLAY SENSORS AUDIO RGB_LEDS
-    VERSION 003
+    VERSION 004
     DESCRIPTION "Vector moon landing game: tilt or turn to rotate, gray thrust, red emergency burst"
     REPOSITORY "https://github.com/rquinn-intrepid/fw2-moonhop")
