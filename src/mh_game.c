@@ -12,6 +12,13 @@ static float rng_f(uint32_t *s, float lo, float hi)
     return lo + (hi - lo) * (float)(rng_next(s) & 0xFFFFFF) / (float)0x1000000;
 }
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+float mh_self_right(float target)
+{
+    float m = fabsf(target) - MH_RIGHTING_DEADZONE;
+    if (m <= 0.0f) return 0.0f;
+    return target > 0.0f ? m : -m;
+}
+
 static float wrapx(float x)
 {
     while (x < 0.0f) x += MH_W;
@@ -188,10 +195,6 @@ void mh_step(mh_game_t *g, float dt, const mh_input_t *in)
 
     g->time += dt;
 
-    // Rotation follows the tilt target at a limited rate.
-    float tgt = clampf(in->rot_target, -MH_ROT_MAX, MH_ROT_MAX);
-    g->angle += clampf(tgt - g->angle, -MH_ROT_RATE * dt, MH_ROT_RATE * dt);
-
     // Emergency burst: max MH_EMERG_MAX_S per press; release to rearm.
     if (!in->emergency) { g->emerg_armed = true; g->emerg_t = 0.0f; }
     bool emerg = in->emergency && g->emerg_armed && g->fuel > 0.0f;
@@ -202,6 +205,12 @@ void mh_step(mh_game_t *g, float dt, const mh_input_t *in)
     bool normal = !emerg && in->thrust && g->fuel > 0.0f;
     g->emerg_firing = emerg;
     g->thrusting = normal;
+
+    // Rotation follows the steering target at a limited rate. Bottom-heavy:
+    // with the engine off, small tilts are ignored and the lander rights itself.
+    float tgt = clampf(in->rot_target, -MH_ROT_MAX, MH_ROT_MAX);
+    if (!emerg && !normal) tgt = mh_self_right(tgt);
+    g->angle += clampf(tgt - g->angle, -MH_ROT_RATE * dt, MH_ROT_RATE * dt);
 
     float a = 0.0f;
     if (emerg) { a = MH_THRUST * MH_EMERG_MULT; g->fuel -= MH_BURN * MH_EMERG_BURN_MULT * dt; }

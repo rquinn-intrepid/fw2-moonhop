@@ -25,6 +25,7 @@
 #define MH_LAND_BONUS   150.0f  // fuel gained per safe landing
 #define MH_ROT_RATE     3.0f    // rad/s, max rotation speed
 #define MH_ROT_MAX      1.57f   // +/-90 degrees
+#define MH_RIGHTING_DEADZONE 0.2094f // 12 deg: unpowered, tilts this small are ignored
 #define MH_SAFE_ANGLE   0.1745f // +/-10 degrees
 #define MH_SAFE_VY      14.0f   // px/s downward
 #define MH_SAFE_VX      9.0f    // px/s sideways
@@ -79,5 +80,8 @@ float mh_terrain_y(const mh_game_t *g, float x);      // surface height at x (wr
 float mh_altitude(const mh_game_t *g);                // px from feet to surface below
 const mh_pad_t *mh_pad_at(const mh_game_t *g, float x0, float x1);  // pad under both feet
 void  mh_step(mh_game_t *g, float dt, const mh_input_t *in);
+// Bottom-heavy steering with the engine off: |target| <= deadzone -> upright,
+// larger targets are reduced by the deadzone (continuous).
+float mh_self_right(float target);
 
 #endif

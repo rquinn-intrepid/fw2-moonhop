@@ -79,10 +79,10 @@ static void test_landings(void)
     CHECK(g.phase == MH_CRASHED, "fast landing must crash");
     CHECK(fabsf(g.fuel - (MH_FUEL_START - MH_CRASH_FUEL)) < 0.5f, "crash costs fuel");
 
-    // Too tilted (15 degrees).
+    // Too tilted: steering hard enough that self-righting still leaves ~17 deg.
     mh_new_game(&g, 42);
-    hover_over(&g, pad_with(&g, 1), 0.0f, 5.0f, 0.26f);
-    mh_input_t keep = { 0.26f, false, false };
+    hover_over(&g, pad_with(&g, 1), 0.0f, 5.0f, 0.29f);
+    mh_input_t keep = { 0.5f, false, false };
     run_until_contact(&g, keep);
     CHECK(g.phase == MH_CRASHED, "tilted landing must crash");
 
@@ -148,6 +148,28 @@ static void test_fuel_and_emergency(void)
     CHECK(fabsf(a2 / a1 - 2.5f) < 0.01f, "emergency/normal = %f", (double)(a2 / a1));
 }
 
+static void test_self_right(void)
+{
+    const float d8 = 8.0f / 57.29578f, d20 = 20.0f / 57.29578f;
+    CHECK(mh_self_right(d8) == 0.0f && mh_self_right(-d8) == 0.0f, "small tilt ignored");
+    CHECK(fabsf(mh_self_right(d20) - (d20 - MH_RIGHTING_DEADZONE)) < 1e-5f, "large tilt reduced");
+    CHECK(mh_self_right(-d20) < 0.0f, "sign kept");
+
+    // Engine off, hand 8 deg off level, lander already tipped 8 deg: rights itself.
+    mh_game_t g; mh_new_game(&g, 11);
+    g.y = 30; g.vy = -40; g.angle = d8;
+    mh_input_t off = { d8, false, false };
+    for (int i = 0; i < 50; i++) mh_step(&g, 0.01f, &off);
+    CHECK(fabsf(g.angle) < 0.001f, "unpowered lander should level, angle %f", (double)g.angle);
+
+    // Engine on: the same 8 deg steering is honoured.
+    mh_new_game(&g, 11);
+    g.y = 120; g.vy = 0;
+    mh_input_t on = { d8, true, false };
+    for (int i = 0; i < 50; i++) mh_step(&g, 0.01f, &on);
+    CHECK(fabsf(g.angle - d8) < 0.001f, "powered lander follows steering, angle %f", (double)g.angle);
+}
+
 static void test_wrap(void)
 {
     mh_game_t g; mh_new_game(&g, 3);
@@ -176,6 +198,7 @@ int main(void)
     test_landings();
     test_fuel_and_emergency();
     test_wrap();
+    test_self_right();
     test_game_over();
     if (g_fail) { printf("%d failure(s)\n", g_fail); return 1; }
     printf("mh_game: all passed\n");

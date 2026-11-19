@@ -469,7 +469,7 @@ int main(void)
         fw2_app_recovery_sleep_ms(50);
     }
     audio_setup();
-    DIAG("moonhop: v002 up, imu=%d agentio=%d\n", s_have_imu, agentio);
+    DIAG("moonhop: v003 up, imu=%d agentio=%d\n", s_have_imu, agentio);
 
     static mh_game_t g;
     mh_new_game(&g, 0x5EED1u);
