@@ -15,7 +15,7 @@
 #define MH_W            480
 #define MH_H            260     // play field height (HUD above, buttons below)
 #define MH_GRAVITY      2.4f    // px/s^2
-#define MH_THRUST       5.5f    // px/s^2, normal engine
+#define MH_THRUST       7.5f    // px/s^2, normal engine (~3x gravity)
 #define MH_EMERG_MULT   2.5f    // emergency thrust = 2.5x normal
 #define MH_FUEL_START   1000.0f
 #define MH_BURN         12.0f   // fuel/s, normal thrust

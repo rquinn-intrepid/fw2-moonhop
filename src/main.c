@@ -19,6 +19,7 @@
 #define BE(c) ((uint16_t)((((c) >> 8) & 0xFF) | (((c) & 0xFF) << 8)))
 #define RAD2DEG 57.29578f
 
+#define KEY_FRESH_MS 1200     // > the keyboard's ~500 ms held-button report cadence
 #define FB_W   480
 #define FB_H   296            // HUD (32) + play field (MH_H 260) + gap
 #define FIELD_Y 34            // play-field origin on screen
@@ -252,49 +253,95 @@ static void button_bar(int mode)   // 0 = calibrate/start, 1 = flying
     }
 }
 
-// ---------------------------------------------------------------- IMU
-static bool s_have_imu;
+// ---------------------------------------------------------------- IMU steering
+// Two ways to "turn the board right", learned from the player's own gesture
+// on the second calibration screen:
+//   TILT  - the gesture changed the direction of gravity (a tilt/roll, or a
+//           steering-wheel turn with the board upright): accelerometer angle,
+//           absolute, no drift.
+//   TURN  - the gesture was a rotation about the gravity axis (e.g. turning
+//           the board while it lies flat), which the accelerometer cannot see:
+//           integrate the gyro about the learned axis. Relative; re-centred on
+//           every spawn and by NAV CENTER.
+static bool  s_have_imu;
 static float s_g[3], s_n[3] = { 0, 0, 1 }, s_u[3] = { 1, 0, 0 };
+static float s_w[3], s_bias[3];            // gyro dps, and its at-rest bias
+static float s_rot[3];                     // gyro integral during the turn-right step, deg
+static float s_k[3] = { 0, 0, 1 };         // learned turn axis (TURN mode)
+static float s_turn;                       // integrated turn angle, rad (TURN mode)
+static bool  s_turn_mode;
+static const char *s_mode_name = "TILT";
 
 static float dot3(const float *a, const float *b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+static float len3(const float *a) { return sqrtf(dot3(a, a)); }
 static void norm3(float *a)
 {
-    float m = sqrtf(dot3(a, a));
+    float m = len3(a);
     if (m > 1e-6f) { a[0] /= m; a[1] /= m; a[2] /= m; }
 }
-static void imu_poll(void)
+static void imu_poll(float dt, bool learn_bias, bool learn_rot)
 {
     bmi323_reading_t r;
-    if (s_have_imu && bmi323_read(&r) && r.valid) {
-        s_g[0] += 0.3f * (r.ax - s_g[0]);
-        s_g[1] += 0.3f * (r.ay - s_g[1]);
-        s_g[2] += 0.3f * (r.az - s_g[2]);
+    if (!s_have_imu || !bmi323_read(&r) || !r.valid) return;
+    float a[3] = { r.ax, r.ay, r.az }, w[3] = { r.gx, r.gy, r.gz };
+    for (int i = 0; i < 3; i++) {
+        s_g[i] += 0.3f * (a[i] - s_g[i]);
+        s_w[i] = w[i];
+        if (learn_bias) s_bias[i] += 0.02f * (w[i] - s_bias[i]);   // ~1 s average at rest
+        if (learn_rot)  s_rot[i] += (w[i] - s_bias[i]) * dt;
+    }
+    if (s_turn_mode) {
+        float rate = 0.0f;
+        for (int i = 0; i < 3; i++) rate += (w[i] - s_bias[i]) * s_k[i];
+        if (fabsf(rate) > 0.8f) s_turn += rate * dt / RAD2DEG;     // ignore sub-deadband jitter
     }
 }
-static void cal_level(void) { memcpy(s_n, s_g, sizeof s_n); norm3(s_n); }
+static void cal_level(void)
+{
+    memcpy(s_n, s_g, sizeof s_n); norm3(s_n);
+    memset(s_rot, 0, sizeof s_rot);
+}
 static void cal_right(void)
 {
+    // How much did gravity move (tilt), and how much did the board rotate?
+    float gn[3]; memcpy(gn, s_g, sizeof gn); norm3(gn);
+    float tilt_deg = acosf(fmaxf(-1.0f, fminf(1.0f, dot3(gn, s_n)))) * RAD2DEG;
+    float rot_deg = len3(s_rot);
+    float k[3]; memcpy(k, s_rot, sizeof k); norm3(k);
+    bool about_gravity = fabsf(dot3(k, s_n)) > 0.7f;
+    DIAG("moonhop: cal tilt=%d deg rot=%d deg axis.n=%d/1000\n",
+         (int)tilt_deg, (int)rot_deg, (int)(dot3(k, s_n) * 1000));
+
+    if (rot_deg > 10.0f && about_gravity && tilt_deg < 0.5f * rot_deg) {
+        s_turn_mode = true;  s_mode_name = "TURN";
+        memcpy(s_k, k, sizeof s_k);          // sign included: this way = right
+        s_turn = 0.0f;
+        return;
+    }
+    s_turn_mode = false; s_mode_name = "TILT";
     float u[3]; memcpy(u, s_g, sizeof u);
-    float k = dot3(u, s_n);
-    for (int i = 0; i < 3; i++) u[i] -= k * s_n[i];
-    if (sqrtf(dot3(u, u)) < 0.15f) {          // not tilted: pick the flattest board axis
+    float d = dot3(u, s_n);
+    for (int i = 0; i < 3; i++) u[i] -= d * s_n[i];
+    if (len3(u) < 0.15f) {                   // no clear gesture: flattest board axis
         int best = 0;
         for (int i = 1; i < 3; i++) if (fabsf(s_n[i]) < fabsf(s_n[best])) best = i;
         float e[3] = { 0, 0, 0 }; e[best] = 1.0f;
-        k = dot3(e, s_n);
-        for (int i = 0; i < 3; i++) u[i] = e[i] - k * s_n[i];
-        DIAG("moonhop: right-tilt too small, fallback axis %d\n", best);
+        d = dot3(e, s_n);
+        for (int i = 0; i < 3; i++) u[i] = e[i] - d * s_n[i];
+        s_mode_name = "TILT?";
+        DIAG("moonhop: no clear gesture, fallback axis %d\n", best);
     }
     norm3(u);
     memcpy(s_u, u, sizeof s_u);
 }
-static float tilt_rad(void)
+static float steer_rad(void)
 {
     if (!s_have_imu) return 0.0f;
+    if (s_turn_mode) return s_turn;          // 1:1 with the board
     float t = atan2f(dot3(s_g, s_u), dot3(s_g, s_n));
     const float dead = 2.0f / RAD2DEG;
     if (fabsf(t) < dead) return 0.0f;
-    return t > 0 ? t - dead : t + dead;
+    return (t > 0 ? t - dead : t + dead) * 1.5f;
 }
 
 // ---------------------------------------------------------------- audio
@@ -422,7 +469,7 @@ int main(void)
         fw2_app_recovery_sleep_ms(50);
     }
     audio_setup();
-    DIAG("moonhop: v001 up, imu=%d agentio=%d\n", s_have_imu, agentio);
+    DIAG("moonhop: v002 up, imu=%d agentio=%d\n", s_have_imu, agentio);
 
     static mh_game_t g;
     mh_new_game(&g, 0x5EED1u);
@@ -442,19 +489,21 @@ int main(void)
         float dt = (float)(now - last) * 1e-6f;
         last = now;
         if (dt > 0.1f) dt = 0.1f;            // e.g. after a screenshot stalled us
-        imu_poll();
+        imu_poll(dt, st == ST_CAL_LEVEL, st == ST_CAL_RIGHT);
 
         bool green = false;
         uartkbd_event_t ev;
         while (uartkbd_next_event(&ev)) {
             if (!ev.pressed) continue;
             if (ev.btn == UARTKBD_BTN_GREEN) green = true;
-            if (ev.btn == UARTKBD_BTN_NAV_CENTER) nav_trim = 0.0f;
+            if (ev.btn == UARTKBD_BTN_NAV_CENTER) { nav_trim = 0.0f; s_turn = 0.0f; }
         }
-        bool gray = uartkbd_button_down_fresh(UARTKBD_BTN_GREY, 300);
-        bool red  = uartkbd_button_down_fresh(UARTKBD_BTN_RED, 300);
-        if (uartkbd_button_down_fresh(UARTKBD_BTN_NAV_LEFT, 300))  nav_trim -= 2.0f * dt;
-        if (uartkbd_button_down_fresh(UARTKBD_BTN_NAV_RIGHT, 300)) nav_trim += 2.0f * dt;
+        // The keyboard controller re-reports a held button about every 500 ms,
+        // so "fresh" must allow longer than that or a hold reads as pulses.
+        bool gray = uartkbd_button_down_fresh(UARTKBD_BTN_GREY, KEY_FRESH_MS);
+        bool red  = uartkbd_button_down_fresh(UARTKBD_BTN_RED, KEY_FRESH_MS);
+        if (uartkbd_button_down_fresh(UARTKBD_BTN_NAV_LEFT, KEY_FRESH_MS))  nav_trim -= 2.0f * dt;
+        if (uartkbd_button_down_fresh(UARTKBD_BTN_NAV_RIGHT, KEY_FRESH_MS)) nav_trim += 2.0f * dt;
         if (nav_trim > MH_ROT_MAX) nav_trim = MH_ROT_MAX;
         if (nav_trim < -MH_ROT_MAX) nav_trim = -MH_ROT_MAX;
 
@@ -471,10 +520,11 @@ int main(void)
                 waiting_start = false;
                 DIAG("moonhop: new game seed=%x\n", (unsigned)seed);
             }
-        } else if (uartkbd_button_down_fresh(UARTKBD_BTN_PAGE, 300)) {
+        } else if (uartkbd_button_down_fresh(UARTKBD_BTN_PAGE, KEY_FRESH_MS)) {
             acc = 0.0f;                      // paused while PAGE is held (About screen)
         } else {
-            mh_input_t in = { tilt_rad() * 1.5f + nav_trim, gray, red };
+            if (g.phase != MH_FLYING) s_turn = 0.0f;   // re-centre TURN mode each attempt
+            mh_input_t in = { steer_rad() + nav_trim, gray, red };
             acc += dt;
             while (acc >= 0.01f) {
                 acc -= 0.01f;
@@ -505,12 +555,17 @@ int main(void)
             if (st == ST_CAL_LEVEL || st == ST_CAL_RIGHT) {
                 button_bar(0);
                 vtext_c(240, 60, 4.0f, K_CYAN, "MOONHOP");
-                vtext_c(240, 130, 2.0f, K_WHITE,
-                        st == ST_CAL_LEVEL ? "HOLD LEVEL" : "TILT RIGHT");
-                vtext_c(240, 160, 2.0f, K_WHITE, "PRESS GREEN");
-                char b[32];
-                snprintf(b, sizeof b, "X %+05d Y %+05d Z %+05d",
-                         (int)(s_g[0] * 1000), (int)(s_g[1] * 1000), (int)(s_g[2] * 1000));
+                char b[40];
+                if (st == ST_CAL_LEVEL) {
+                    vtext_c(240, 125, 2.0f, K_WHITE, "HOLD IT HOW YOU WILL PLAY");
+                    vtext_c(240, 155, 2.0f, K_WHITE, "KEEP STILL - PRESS GREEN");
+                    snprintf(b, sizeof b, "X %+05d Y %+05d Z %+05d",
+                             (int)(s_g[0] * 1000), (int)(s_g[1] * 1000), (int)(s_g[2] * 1000));
+                } else {
+                    vtext_c(240, 125, 2.0f, K_WHITE, "NOW TURN OR TILT IT RIGHT");
+                    vtext_c(240, 155, 2.0f, K_WHITE, "HOLD THERE - PRESS GREEN");
+                    snprintf(b, sizeof b, "TURNED %d DEG", (int)len3(s_rot));
+                }
                 vtext_c(240, 210, 1.5f, K_CYAN, b);
             } else {
                 draw_hud(&g);
@@ -545,9 +600,12 @@ int main(void)
 
         if (now - t_diag > 1000000) {
             t_diag = now;
-            DIAG("st=%d ph=%d x=%d y=%d vx=%d vy=%d ang=%d fuel=%d score=%u flame=%d\n",
+            DIAG("st=%d ph=%d x=%d y=%d vx=%d vy=%d ang=%d steer=%d(%s) gray=%d red=%d fuel=%d score=%u flame=%d\n",
                  st, g.phase, (int)g.x, (int)g.y, (int)g.vx, (int)g.vy,
-                 (int)(g.angle * RAD2DEG), (int)g.fuel, (unsigned)g.score, flame);
+                 (int)(g.angle * RAD2DEG), (int)(steer_rad() * RAD2DEG), s_mode_name,
+                 uartkbd_button_down_fresh(UARTKBD_BTN_GREY, KEY_FRESH_MS),
+                 uartkbd_button_down_fresh(UARTKBD_BTN_RED, KEY_FRESH_MS),
+                 (int)g.fuel, (unsigned)g.score, flame);
         }
         if (agentio) agentio_task();
     }
