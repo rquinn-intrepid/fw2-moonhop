@@ -6,3 +6,4 @@ build-tests/
 *.png
 __pycache__/
 .venv/
+!docs/images/*.png

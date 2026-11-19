@@ -1,41 +1,87 @@
-# fw2-moonhop
+# moonhop
 
-An original vector-style moon landing game for the FreeWili 2 DISPLAY CPU.
-Glowing cyan lines on black, a jagged procedurally generated mountain range,
-and four flat pads worth 1x, 2X, 4X and 5X (the 5X pad is the narrowest and
-sits up on the peaks).
+**A vector-style moon landing game for the FreeWili 2.**
+Glowing cyan lines on black, a jagged mountain range that changes every stage,
+and four landing pads worth 1x, 2X, 4X and 5X. Turn the board to rotate the
+lander, feather the thrust, and set it down gently.
 
-## Play
+<p align="center">
+  <img src="docs/images/thrust.png" width="480" alt="moonhop: lander thrusting over the mountains">
+</p>
+
+---
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/flying.png" width="320"><br><sub>Drifting in over the pads</sub></td>
+    <td align="center"><img src="docs/images/emergency.png" width="320"><br><sub>Emergency thrust (red)</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/crash.png" width="320"><br><sub>Crash: the lander breaks into vector debris</sub></td>
+    <td align="center"><img src="docs/images/game-over.png" width="320"><br><sub>Out of fuel: game over</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/calibrate-level.png" width="320"><br><sub>Setup 1: hold it how you will play</sub></td>
+    <td align="center"><img src="docs/images/calibrate-turn.png" width="320"><br><sub>Setup 2: turn or tilt right</sub></td>
+  </tr>
+</table>
+
+## Controls
+
+<p align="center"><img src="docs/images/controls.svg" width="640" alt="Controls diagram"></p>
 
 | Input | Action |
 | --- | --- |
-| Tilt the board left/right | Rotate the lander (BMI323 accelerometer) |
-| Hold GRAY | Thrust |
-| Press RED | Emergency thrust: 2.5x force, 4x fuel burn, cuts out after 2 s |
-| GREEN | Start / confirm |
-| NAV LEFT/RIGHT | Rotate (also the steering if no IMU is found); NAV CENTER zeroes it |
-| Hold PAGE 5 s | About screen (game pauses) |
-| Hold HOME 5 s | Leave the app |
+| **Turn or tilt** the board | Rotate the lander |
+| Hold **GRAY** | Thrust (about 3x moon gravity) |
+| Tap **RED** | Emergency thrust: 2.5x force, burns fuel 4x faster, cuts out after 2 s |
+| **GREEN** | Start / confirm |
+| D-pad left / right | Rotate (backup); D-pad centre re-centres steering |
+| Hold **PAGE** 5 s | About screen (game pauses) |
+| Hold **HOME** 5 s | Back to the FreeWili menu |
 
-Red is a burst on purpose: **holding red for 6 s powers the FreeWili 2 off**
-(the power controller does that, not the app). Tap it.
+> **Tap red, don't hold it.** Holding red for 6 seconds powers the FreeWili 2
+> off. The emergency burst stops after 2 s so there is never a reason to.
 
-On first start, hold the board the way you will play and press GREEN, then tilt
-it right and press GREEN; the game learns your steering direction from that.
+## How to play
 
-- **Safe landing:** both feet on a flat pad, within ±10° of upright, slow
-  vertical and horizontal speed. Scores 100 × the pad multiplier, adds fuel,
-  shows `LANDED!` and moves to a new terrain after 2 s.
-- **Crash:** rocks, too fast or too tilted. Vector debris, lose 300 fuel,
-  try again on the same terrain. Game over when fuel reaches 0.
-- Flying off the left or right edge wraps to the other side.
-- Sound: low-passed noise rumble for thrust (louder for emergency) and an
-  explosion burst, kept well below the 0.5 W speaker limit; the speaker path
-  powers down when silent. LEDs glow with thrust and flash red on a crash.
+1. Open **moonhop** from the board's App Explorer.
+2. **Setup.** Hold the board the way you will play, keep still, press GREEN.
+   Then turn or tilt it to the right (watch `TURNED __ DEG` climb), hold it
+   there and press GREEN. The game learns which motion you use:
+   - *turning* the board (for example flat on a table) steers with the gyro;
+   - *tilting* it steers with the accelerometer.
+3. **Fly.** The lander starts high with some sideways drift. Rotate against the
+   drift and use GRAY to brake.
+4. **Land** with both feet on a flat pad, within ±10° of upright, slowly.
 
-## Getting started
+| Pad | Points |
+| --- | --- |
+| unmarked | 100 |
+| 2X | 200 |
+| 4X | 400 |
+| 5X (narrowest, up on the peaks) | 500 |
 
-```
+- A safe landing adds **150 fuel**, shows `LANDED!` and moves to new terrain.
+- A crash (rocks, too fast, too tilted) costs **300 fuel**; you retry the same
+  terrain. **Game over** when fuel reaches 0.
+- Fly off one side of the screen and you come back on the other.
+- **Bottom-heavy:** with the engine off, small tilts (up to 12°) are ignored
+  and the lander rights itself, so a slightly unsteady hand does not tip you
+  into a crash. Steering while thrusting is unchanged.
+
+## Sound and lights
+
+- A low rumble while thrusting (louder for emergency thrust) and an explosion
+  on a crash, synthesized on the board and kept well under the speaker's
+  0.5 W limit. The speaker powers down when it is quiet.
+- The RGB LEDs glow with thrust, flash red on a crash and green on a landing.
+
+## Build and install
+
+```bash
 git clone --recurse-submodules https://github.com/rquinn-intrepid/fw2-moonhop.git
 cd fw2-moonhop
 ```
@@ -48,8 +94,22 @@ mingw64 GCC.
 | --- | --- |
 | `tools\dev build` | Build `build/moonhop.uf2` |
 | `tools\dev run` | Build, load into the board over USB and start it (gone after a reboot) |
-| `tools\dev install` | Copy the UF2 to the SD card's `/apps/` so it shows in the board's app list |
+| `tools\dev install` | Copy the UF2 to the SD card's `/apps/` so it is in the app list |
 | `tools\dev test` | Host unit tests for the game rules |
-| `tools\dev screenshot -o shot.png` | Any other wilibsp `fw` verb works the same way |
+| `tools\dev screenshot -o shot.png` | Any other wilibsp `fw` command works too |
 
-`wilibsp/` is a submodule pinned to the BSP commit this app was tested against.
+## Project layout
+
+```
+src/mh_game.c   game rules: terrain, physics, landing, scoring (pure C, host-tested)
+src/main.c      board side: renderer, stroke font, IMU steering, sound, LEDs
+tests/          host unit tests (tools\dev test)
+docs/           hardware check notes and these images
+wilibsp/        FreeWili 2 board support, pinned submodule
+```
+
+Built on [wilibsp](https://github.com/freewili/wilibsp), the FreeWili 2 board
+support package. What was and was not checked on real hardware is recorded in
+[docs/2026-11-19-moonhop-e2e.md](docs/2026-11-19-moonhop-e2e.md).
+
+<p align="center"><img src="docs/images/about.png" width="320" alt="About screen"></p>
