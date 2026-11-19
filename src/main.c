@@ -431,6 +431,7 @@ static void audio_update(float dt, int flame, bool crash_event)
         }
     }
     if (!s_snd_on) {
+        codec_nau88c10_dac_mute(false);       // low_power soft-muted the DAC; undo it first
         codec_nau88c10_set_output(CODEC_OUT_SPEAKER);
         audio_i2s_duplex_play_loop(s_snd, SND_FRAMES);
         s_snd_on = true;
@@ -478,7 +479,7 @@ int main(void)
         fw2_app_recovery_sleep_ms(50);
     }
     audio_setup();
-    DIAG("moonhop: v004 up, imu=%d agentio=%d\n", s_have_imu, agentio);
+    DIAG("moonhop: v005 up, imu=%d agentio=%d\n", s_have_imu, agentio);
 
     static mh_game_t g;
     mh_new_game(&g, 0x5EED1u);
